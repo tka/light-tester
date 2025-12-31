@@ -65,7 +65,45 @@
       const [showSecondLight, setShowSecondLight] = useState(false); // 第二盞燈
       const [lightSpacing, setLightSpacing] = useState(1.0); // 燈間距
       const [wallColor, setWallColor] = useState('#9e9e9e'); // 牆面顏色 (水泥灰)
-      const [showGrid, setShowGrid] = useState(false); // 顯示牆面網格
+      const [showGrid, setShowGrid] = useState(true); // 顯示牆面網格
+      const [wallHeight, setWallHeight] = useState(3); // 牆壁高度 (米)，預設 300cm
+
+      // 從 URL 讀取初始參數
+      useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        if (params.has('ba')) setBeamAngle(Number(params.get('ba')));
+        if (params.has('ta')) setTiltAngle(Number(params.get('ta')));
+        if (params.has('wd')) setWallDistance(Number(params.get('wd')));
+        if (params.has('wh')) setWallHeight(Number(params.get('wh')));
+        if (params.has('sf')) setSoftness(Number(params.get('sf')));
+        if (params.has('li')) setLightIntensity(Number(params.get('li')));
+        if (params.has('lc')) setLightColor(decodeURIComponent(params.get('lc')));
+        if (params.has('sh')) setShowHelper(params.get('sh') === '1');
+        if (params.has('sl')) setShowSecondLight(params.get('sl') === '1');
+        if (params.has('ls')) setLightSpacing(Number(params.get('ls')));
+        if (params.has('wc')) setWallColor(decodeURIComponent(params.get('wc')));
+        if (params.has('sg')) setShowGrid(params.get('sg') === '1');
+      }, []);
+
+      // 同步參數到 URL
+      useEffect(() => {
+        const params = new URLSearchParams();
+        params.set('ba', beamAngle);
+        params.set('ta', tiltAngle);
+        params.set('wd', wallDistance);
+        params.set('wh', wallHeight);
+        params.set('sf', softness);
+        params.set('li', lightIntensity);
+        params.set('lc', encodeURIComponent(lightColor));
+        params.set('sh', showHelper ? '1' : '0');
+        params.set('sl', showSecondLight ? '1' : '0');
+        params.set('ls', lightSpacing);
+        params.set('wc', encodeURIComponent(wallColor));
+        params.set('sg', showGrid ? '1' : '0');
+
+        const newUrl = `${window.location.pathname}?${params.toString()}`;
+        window.history.replaceState({}, '', newUrl);
+      }, [beamAngle, tiltAngle, wallDistance, wallHeight, softness, lightIntensity, lightColor, showHelper, showSecondLight, lightSpacing, wallColor, showGrid]);
 
       // 視角切換
       const switchView = useCallback((viewName) => {
@@ -196,6 +234,14 @@
         rightWall.rotation.y = -Math.PI / 2;
         rightWall.receiveShadow = true;
         scene.add(rightWall);
+
+        // 儲存牆壁和天花板參考
+        sceneRef.current.ceiling = ceiling;
+        sceneRef.current.backWall = backWall;
+        sceneRef.current.leftWall = leftWall;
+        sceneRef.current.rightWall = rightWall;
+        sceneRef.current.roomWidth = roomWidth;
+        sceneRef.current.ceilingMaterial = ceilingMaterial;
 
         // 牆面網格輔助線
         const createWallGrid = (width, height, position, rotation) => {
@@ -397,7 +443,7 @@
             scene.lightFixture2.position.copy(scene.spotLight2.position);
           }
         }
-      }, [beamAngle, tiltAngle, wallDistance, softness, lightIntensity, lightColor, showHelper, showSecondLight, lightSpacing]);
+      }, [beamAngle, tiltAngle, wallDistance, softness, lightIntensity, lightColor, showHelper, showSecondLight, lightSpacing, wallHeight]);
 
       // 更新牆面顏色
       useEffect(() => {
@@ -413,6 +459,67 @@
         leftWallGrid.visible = showGrid;
         rightWallGrid.visible = showGrid;
       }, [showGrid]);
+
+      // 更新牆壁高度
+      useEffect(() => {
+        if (!sceneRef.current) return;
+        const scene = sceneRef.current;
+        const { ceiling, backWall, leftWall, rightWall, roomWidth, roomDepth, wallMaterial, grids } = scene;
+
+        if (!ceiling || !backWall || !leftWall || !rightWall) return;
+
+        // 更新天花板位置
+        ceiling.position.y = wallHeight;
+
+        // 更新後牆
+        backWall.geometry.dispose();
+        backWall.geometry = new THREE.PlaneGeometry(roomWidth, wallHeight);
+        backWall.position.set(0, wallHeight / 2, -roomDepth / 2);
+
+        // 更新左牆
+        leftWall.geometry.dispose();
+        leftWall.geometry = new THREE.PlaneGeometry(roomDepth, wallHeight);
+        leftWall.position.set(-roomWidth / 2, wallHeight / 2, 0);
+
+        // 更新右牆
+        rightWall.geometry.dispose();
+        rightWall.geometry = new THREE.PlaneGeometry(roomDepth, wallHeight);
+        rightWall.position.set(roomWidth / 2, wallHeight / 2, 0);
+
+        // 更新 roomHeight 參考值
+        scene.roomHeight = wallHeight;
+
+        // 更新網格輔助線
+        if (grids) {
+          const { backWallGrid, leftWallGrid, rightWallGrid } = grids;
+
+          // 重新建立網格
+          const updateGrid = (gridGroup, width, height, position, rotation) => {
+            gridGroup.clear();
+            const gridMaterial = new THREE.LineBasicMaterial({ color: 0x444444, transparent: true, opacity: 0.5 });
+            const step = 0.5;
+
+            for (let y = 0; y <= height; y += step) {
+              const points = [new THREE.Vector3(-width / 2, y - height / 2, 0.01), new THREE.Vector3(width / 2, y - height / 2, 0.01)];
+              const geometry = new THREE.BufferGeometry().setFromPoints(points);
+              const line = new THREE.Line(geometry, gridMaterial);
+              gridGroup.add(line);
+            }
+            for (let x = -width / 2; x <= width / 2; x += step) {
+              const points = [new THREE.Vector3(x, -height / 2, 0.01), new THREE.Vector3(x, height / 2, 0.01)];
+              const geometry = new THREE.BufferGeometry().setFromPoints(points);
+              const line = new THREE.Line(geometry, gridMaterial);
+              gridGroup.add(line);
+            }
+            gridGroup.position.copy(position);
+            if (rotation) gridGroup.rotation.y = rotation;
+          };
+
+          updateGrid(backWallGrid, roomWidth, wallHeight, new THREE.Vector3(0, wallHeight / 2, -roomDepth / 2));
+          updateGrid(leftWallGrid, roomDepth, wallHeight, new THREE.Vector3(-roomWidth / 2, wallHeight / 2, 0), Math.PI / 2);
+          updateGrid(rightWallGrid, roomDepth, wallHeight, new THREE.Vector3(roomWidth / 2, wallHeight / 2, 0), -Math.PI / 2);
+        }
+      }, [wallHeight]);
 
       // 預設值
       const presets = {
@@ -455,6 +562,8 @@
                 <span className="text-yellow-400 font-mono">{tiltAngle}°</span>
                 <span className="text-gray-400">離牆距離:</span>
                 <span className="text-yellow-400 font-mono">{wallDistance.toFixed(2)}m</span>
+                <span className="text-gray-400">牆壁高度:</span>
+                <span className="text-yellow-400 font-mono">{(wallHeight * 100).toFixed(0)}cm</span>
                 <span className="text-gray-400">柔光程度:</span>
                 <span className="text-yellow-400 font-mono">{(softness * 100).toFixed(0)}%</span>
               </div>
@@ -547,6 +656,24 @@
                   className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
                 />
                 <p className="text-xs text-gray-500 mt-1">燈具中心到牆面的距離</p>
+              </div>
+
+              {/* 牆壁高度 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">牆壁高度</label>
+                  <span className="text-yellow-400 font-mono text-sm">{(wallHeight * 100).toFixed(0)}cm</span>
+                </div>
+                <input
+                  type="range"
+                  min="2"
+                  max="5"
+                  step="0.1"
+                  value={wallHeight}
+                  onChange={(e) => setWallHeight(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">房間高度 (200cm - 500cm)</p>
               </div>
 
               {/* 柔光程度 */}
@@ -735,10 +862,10 @@
               <h3 className="text-sm font-semibold text-blue-400 mb-2">光學計算</h3>
               <div className="text-xs text-gray-300 space-y-1">
                 <p>光錐直徑 (地面): <span className="text-blue-300 font-mono">
-                  {(2 * 3 * Math.tan(beamAngle * Math.PI / 360)).toFixed(2)}m
+                  {(2 * wallHeight * Math.tan(beamAngle * Math.PI / 360)).toFixed(2)}m
                 </span></p>
                 <p>牆面光斑高度: <span className="text-blue-300 font-mono">
-                  {(3 / Math.sin(tiltAngle * Math.PI / 180) * Math.tan(beamAngle * Math.PI / 360) * 2).toFixed(2)}m
+                  {(wallHeight / Math.sin(tiltAngle * Math.PI / 180) * Math.tan(beamAngle * Math.PI / 360) * 2).toFixed(2)}m
                 </span></p>
               </div>
             </div>
