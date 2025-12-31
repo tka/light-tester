@@ -66,7 +66,6 @@
       const [lightSpacing, setLightSpacing] = useState(1.0); // 燈間距
       const [wallColor, setWallColor] = useState('#9e9e9e'); // 牆面顏色 (水泥灰)
       const [showGrid, setShowGrid] = useState(false); // 顯示牆面網格
-      const [lightType, setLightType] = useState('recessed'); // 燈具類型: recessed, track, linear
 
       // 視角切換
       const switchView = useCallback((viewName) => {
@@ -88,47 +87,6 @@
           controls.update();
         }
       }, []);
-
-      // 創建燈具模型
-      const createLightFixture = (type) => {
-        const fixture = new THREE.Group();
-        const metalMaterial = new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 });
-        const darkMaterial = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.5, side: THREE.DoubleSide });
-
-        if (type === 'recessed') {
-          // 崁燈
-          const outerRing = new THREE.Mesh(new THREE.TorusGeometry(0.08, 0.015, 16, 32), metalMaterial);
-          outerRing.rotation.x = Math.PI / 2;
-          fixture.add(outerRing);
-          const innerCone = new THREE.Mesh(new THREE.ConeGeometry(0.06, 0.1, 32, 1, true), darkMaterial);
-          innerCone.position.y = -0.05;
-          fixture.add(innerCone);
-        } else if (type === 'track') {
-          // 軌道燈
-          const track = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.3), metalMaterial);
-          track.position.y = 0.015;
-          fixture.add(track);
-          const head = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 0.12, 32), darkMaterial);
-          head.rotation.x = Math.PI / 2;
-          head.position.z = 0.06;
-          fixture.add(head);
-          const connector = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.05, 16), metalMaterial);
-          connector.position.y = -0.01;
-          fixture.add(connector);
-        } else if (type === 'linear') {
-          // 線性燈條
-          const housing = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.03, 0.5), metalMaterial);
-          fixture.add(housing);
-          const diffuser = new THREE.Mesh(
-            new THREE.BoxGeometry(0.04, 0.01, 0.48),
-            new THREE.MeshStandardMaterial({ color: 0xffffee, emissive: 0xffffee, emissiveIntensity: 0.3, transparent: true, opacity: 0.9 })
-          );
-          diffuser.position.y = -0.02;
-          fixture.add(diffuser);
-        }
-
-        return fixture;
-      };
 
       // Three.js 初始化
       useEffect(() => {
@@ -307,8 +265,20 @@
         scene.add(spotLightHelper);
         spotLightHelperRef.current = spotLightHelper;
 
-        // 燈具模型
-        const lightFixture = createLightFixture('recessed');
+        // 燈具模型 (崁燈外殼)
+        const lightFixture = new THREE.Group();
+        const outerRing = new THREE.Mesh(
+          new THREE.TorusGeometry(0.08, 0.015, 16, 32),
+          new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 })
+        );
+        outerRing.rotation.x = Math.PI / 2;
+        lightFixture.add(outerRing);
+        const innerCone = new THREE.Mesh(
+          new THREE.ConeGeometry(0.06, 0.1, 32, 1, true),
+          new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.5, side: THREE.DoubleSide })
+        );
+        innerCone.position.y = -0.05;
+        lightFixture.add(innerCone);
         lightFixture.position.copy(spotLight.position);
         scene.add(lightFixture);
 
@@ -326,7 +296,7 @@
         scene.add(targetObject2);
         spotLight2.target = targetObject2;
 
-        const lightFixture2 = createLightFixture('recessed');
+        const lightFixture2 = lightFixture.clone();
         lightFixture2.visible = false;
         scene.add(lightFixture2);
 
@@ -443,44 +413,6 @@
         leftWallGrid.visible = showGrid;
         rightWallGrid.visible = showGrid;
       }, [showGrid]);
-
-      // 更新燈具類型
-      useEffect(() => {
-        if (!sceneRef.current) return;
-        const scene = sceneRef.current;
-
-        // 移除舊燈具
-        if (scene.lightFixture) {
-          scene.remove(scene.lightFixture);
-          scene.lightFixture.traverse((child) => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) child.material.dispose();
-          });
-        }
-        if (scene.lightFixture2) {
-          scene.remove(scene.lightFixture2);
-          scene.lightFixture2.traverse((child) => {
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) child.material.dispose();
-          });
-        }
-
-        // 創建新燈具
-        const newFixture = createLightFixture(lightType);
-        if (spotLightRef.current) {
-          newFixture.position.copy(spotLightRef.current.position);
-        }
-        scene.add(newFixture);
-        scene.lightFixture = newFixture;
-
-        const newFixture2 = createLightFixture(lightType);
-        newFixture2.visible = showSecondLight;
-        if (scene.spotLight2) {
-          newFixture2.position.copy(scene.spotLight2.position);
-        }
-        scene.add(newFixture2);
-        scene.lightFixture2 = newFixture2;
-      }, [lightType]);
 
       // 預設值
       const presets = {
@@ -724,33 +656,6 @@
                     className="w-8 h-8 rounded cursor-pointer"
                   />
                   <span className="text-xs text-gray-400">自訂顏色</span>
-                </div>
-              </div>
-
-              {/* 燈具類型 */}
-              <div>
-                <div className="flex justify-between mb-1">
-                  <label className="text-sm font-medium">燈具類型</label>
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => setLightType('recessed')}
-                    className={`flex-1 py-2 rounded text-xs ${lightType === 'recessed' ? 'bg-yellow-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    崁燈
-                  </button>
-                  <button
-                    onClick={() => setLightType('track')}
-                    className={`flex-1 py-2 rounded text-xs ${lightType === 'track' ? 'bg-yellow-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    軌道燈
-                  </button>
-                  <button
-                    onClick={() => setLightType('linear')}
-                    className={`flex-1 py-2 rounded text-xs ${lightType === 'linear' ? 'bg-yellow-600' : 'bg-gray-700 hover:bg-gray-600'}`}
-                  >
-                    線性燈
-                  </button>
                 </div>
               </div>
 
