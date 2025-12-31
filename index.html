@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>崁燈洗牆效果模擬器</title>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- React -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+
+  <!-- Three.js (使用較舊版本，OrbitControls 會自動附加到 THREE) -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+
+  <!-- Babel Standalone -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <style>
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+    #root > div {
+      width: 100%;
+      height: 100%;
+    }
+    canvas {
+      display: block;
+      width: 100% !important;
+      height: 100% !important;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useRef, useEffect, useState } = React;
+
+    const LightingSimulator = () => {
+      const canvasRef = useRef(null);
+      const sceneRef = useRef(null);
+      const rendererRef = useRef(null);
+      const cameraRef = useRef(null);
+      const spotLightRef = useRef(null);
+      const spotLightHelperRef = useRef(null);
+      const animationRef = useRef(null);
+
+      // 燈光參數
+      const [beamAngle, setBeamAngle] = useState(30); // 放射角度 (度)
+      const [tiltAngle, setTiltAngle] = useState(45); // 與天花板夾角 (度)
+      const [wallDistance, setWallDistance] = useState(0.5); // 與牆面距離 (米)
+      const [softness, setSoftness] = useState(0.5); // 均光效果 (0=銳利, 1=柔和)
+      const [lightIntensity, setLightIntensity] = useState(100); // 燈光強度
+      const [lightColor, setLightColor] = useState('#fff5e6'); // 燈光顏色
+      const [showHelper, setShowHelper] = useState(true); // 顯示輔助線
+      const [showSecondLight, setShowSecondLight] = useState(false); // 第二盞燈
+      const [lightSpacing, setLightSpacing] = useState(1.0); // 燈間距
+      const [wallColor, setWallColor] = useState('#9e9e9e'); // 牆面顏色 (水泥灰)
+
+      // Three.js 初始化
+      useEffect(() => {
+        const canvas = canvasRef.current;
+        const container = canvas.parentElement;
+        const width = container.clientWidth;
+        const height = container.clientHeight;
+
+        // 場景
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1a1a2e);
+        sceneRef.current = scene;
+
+        // 相機
+        const camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 100);
+        camera.position.set(4, 2, 4);
+        camera.lookAt(0, 1, 0);
+        cameraRef.current = camera;
+
+        // 渲染器
+        const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+        renderer.setSize(width, height);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.physicallyCorrectLights = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1;
+        rendererRef.current = renderer;
+
+        // 控制器
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 1, 0);
+
+        // 房間尺寸
+        const roomWidth = 6;
+        const roomHeight = 3;
+        const roomDepth = 6;
+
+        // 材質
+        const wallMaterial = new THREE.MeshStandardMaterial({
+          color: 0x9e9e9e, // 水泥灰
+          roughness: 0.9,
+          metalness: 0,
+        });
+        sceneRef.current.wallMaterial = wallMaterial;
+
+        const floorMaterial = new THREE.MeshStandardMaterial({
+          color: 0x8b7355,
+          roughness: 0.8,
+          metalness: 0,
+        });
+
+        const ceilingMaterial = new THREE.MeshStandardMaterial({
+          color: 0xffffff,
+          roughness: 0.9,
+          metalness: 0,
+        });
+
+        // 地板
+        const floor = new THREE.Mesh(
+          new THREE.PlaneGeometry(roomWidth, roomDepth),
+          floorMaterial
+        );
+        floor.rotation.x = -Math.PI / 2;
+        floor.receiveShadow = true;
+        scene.add(floor);
+
+        // 天花板
+        const ceiling = new THREE.Mesh(
+          new THREE.PlaneGeometry(roomWidth, roomDepth),
+          ceilingMaterial
+        );
+        ceiling.rotation.x = Math.PI / 2;
+        ceiling.position.y = roomHeight;
+        ceiling.receiveShadow = true;
+        scene.add(ceiling);
+
+        // 後牆 (主要洗牆目標)
+        const backWall = new THREE.Mesh(
+          new THREE.PlaneGeometry(roomWidth, roomHeight),
+          wallMaterial
+        );
+        backWall.position.set(0, roomHeight / 2, -roomDepth / 2);
+        backWall.receiveShadow = true;
+        scene.add(backWall);
+
+        // 左牆
+        const leftWall = new THREE.Mesh(
+          new THREE.PlaneGeometry(roomDepth, roomHeight),
+          wallMaterial
+        );
+        leftWall.position.set(-roomWidth / 2, roomHeight / 2, 0);
+        leftWall.rotation.y = Math.PI / 2;
+        leftWall.receiveShadow = true;
+        scene.add(leftWall);
+
+        // 右牆
+        const rightWall = new THREE.Mesh(
+          new THREE.PlaneGeometry(roomDepth, roomHeight),
+          wallMaterial
+        );
+        rightWall.position.set(roomWidth / 2, roomHeight / 2, 0);
+        rightWall.rotation.y = -Math.PI / 2;
+        rightWall.receiveShadow = true;
+        scene.add(rightWall);
+
+        // 環境光 (提高強度讓牆面顏色可辨識)
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+        scene.add(ambientLight);
+
+        // 聚光燈
+        const spotLight = new THREE.SpotLight(0xfff5e6, 100);
+        spotLight.position.set(0, roomHeight - 0.05, -roomDepth / 2 + 0.5);
+        spotLight.angle = THREE.MathUtils.degToRad(30);
+        spotLight.penumbra = 0.5;
+        spotLight.decay = 2;
+        spotLight.distance = 10;
+        spotLight.castShadow = true;
+        spotLight.shadow.mapSize.width = 1024;
+        spotLight.shadow.mapSize.height = 1024;
+        spotLight.shadow.camera.near = 0.1;
+        spotLight.shadow.camera.far = 10;
+        scene.add(spotLight);
+        spotLightRef.current = spotLight;
+
+        // 聚光燈目標
+        const targetObject = new THREE.Object3D();
+        targetObject.position.set(0, 0, -roomDepth / 2);
+        scene.add(targetObject);
+        spotLight.target = targetObject;
+
+        // 聚光燈輔助器
+        const spotLightHelper = new THREE.SpotLightHelper(spotLight);
+        scene.add(spotLightHelper);
+        spotLightHelperRef.current = spotLightHelper;
+
+        // 燈具模型 (崁燈外殼)
+        const lightFixture = new THREE.Group();
+
+        const outerRing = new THREE.Mesh(
+          new THREE.TorusGeometry(0.08, 0.015, 16, 32),
+          new THREE.MeshStandardMaterial({ color: 0xcccccc, metalness: 0.8, roughness: 0.2 })
+        );
+        outerRing.rotation.x = Math.PI / 2;
+        lightFixture.add(outerRing);
+
+        const innerCone = new THREE.Mesh(
+          new THREE.ConeGeometry(0.06, 0.1, 32, 1, true),
+          new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.5, side: THREE.DoubleSide })
+        );
+        innerCone.position.y = -0.05;
+        lightFixture.add(innerCone);
+
+        lightFixture.position.copy(spotLight.position);
+        scene.add(lightFixture);
+
+        // 第二盞燈
+        const spotLight2 = new THREE.SpotLight(0xfff5e6, 100);
+        spotLight2.angle = THREE.MathUtils.degToRad(30);
+        spotLight2.penumbra = 0.5;
+        spotLight2.decay = 2;
+        spotLight2.distance = 10;
+        spotLight2.castShadow = true;
+        spotLight2.visible = false;
+        scene.add(spotLight2);
+
+        const targetObject2 = new THREE.Object3D();
+        scene.add(targetObject2);
+        spotLight2.target = targetObject2;
+
+        const lightFixture2 = lightFixture.clone();
+        lightFixture2.visible = false;
+        scene.add(lightFixture2);
+
+        // 儲存到 ref
+        sceneRef.current.spotLight2 = spotLight2;
+        sceneRef.current.targetObject2 = targetObject2;
+        sceneRef.current.lightFixture = lightFixture;
+        sceneRef.current.lightFixture2 = lightFixture2;
+        sceneRef.current.targetObject = targetObject;
+        sceneRef.current.roomHeight = roomHeight;
+        sceneRef.current.roomDepth = roomDepth;
+
+        // 動畫循環
+        const animate = () => {
+          animationRef.current = requestAnimationFrame(animate);
+          controls.update();
+          if (spotLightHelperRef.current) {
+            spotLightHelperRef.current.update();
+          }
+          renderer.render(scene, camera);
+        };
+        animate();
+
+        // 響應式調整
+        const handleResize = () => {
+          const width = container.clientWidth;
+          const height = container.clientHeight;
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+          renderer.setSize(width, height, false);
+        };
+        window.addEventListener('resize', handleResize);
+        // 延遲初始化尺寸，確保 CSS 已套用
+        setTimeout(handleResize, 100);
+
+        return () => {
+          window.removeEventListener('resize', handleResize);
+          cancelAnimationFrame(animationRef.current);
+          renderer.dispose();
+        };
+      }, []);
+
+      // 更新燈光參數
+      useEffect(() => {
+        if (!spotLightRef.current || !sceneRef.current) return;
+
+        const spotLight = spotLightRef.current;
+        const scene = sceneRef.current;
+        const roomHeight = scene.roomHeight;
+        const roomDepth = scene.roomDepth;
+
+        // 計算燈的位置
+        const lightY = roomHeight - 0.05;
+        const lightZ = -roomDepth / 2 + wallDistance;
+
+        spotLight.position.set(0, lightY, lightZ);
+
+        // 計算目標點位置 (根據夾角)
+        // 與天花板夾角：0°=水平照射牆面, 90°=垂直向下
+        const tiltRad = THREE.MathUtils.degToRad(tiltAngle);
+        const targetY = lightY - Math.sin(tiltRad) * 3;
+        const targetZ = lightZ - Math.cos(tiltRad) * 3;
+        scene.targetObject.position.set(0, targetY, targetZ);
+
+        // 更新燈光參數
+        spotLight.angle = THREE.MathUtils.degToRad(beamAngle / 2);
+        spotLight.penumbra = Math.min(softness, 1); // penumbra 最大 1
+        // softness > 1 時降低 decay 讓光線更柔和
+        spotLight.decay = softness > 1 ? Math.max(0.5, 2 - (softness - 1)) : 2;
+        spotLight.intensity = lightIntensity;
+        spotLight.color.set(lightColor);
+
+        // 更新燈具位置
+        if (scene.lightFixture) {
+          scene.lightFixture.position.copy(spotLight.position);
+        }
+
+        // 更新輔助器
+        if (spotLightHelperRef.current) {
+          spotLightHelperRef.current.visible = showHelper;
+          spotLightHelperRef.current.update();
+        }
+
+        // 第二盞燈
+        if (scene.spotLight2) {
+          scene.spotLight2.visible = showSecondLight;
+          scene.lightFixture2.visible = showSecondLight;
+
+          if (showSecondLight) {
+            scene.spotLight2.position.set(lightSpacing, lightY, lightZ);
+            scene.spotLight2.angle = spotLight.angle;
+            scene.spotLight2.penumbra = Math.min(softness, 1);
+            scene.spotLight2.decay = spotLight.decay;
+            scene.spotLight2.intensity = lightIntensity;
+            scene.spotLight2.color.set(lightColor);
+
+            scene.targetObject2.position.set(lightSpacing, targetY, targetZ);
+            scene.lightFixture2.position.copy(scene.spotLight2.position);
+          }
+        }
+      }, [beamAngle, tiltAngle, wallDistance, softness, lightIntensity, lightColor, showHelper, showSecondLight, lightSpacing]);
+
+      // 更新牆面顏色
+      useEffect(() => {
+        if (!sceneRef.current || !sceneRef.current.wallMaterial) return;
+        sceneRef.current.wallMaterial.color.set(wallColor);
+      }, [wallColor]);
+
+      // 預設值
+      const presets = {
+        narrowBeam: { beamAngle: 15, tiltAngle: 30, wallDistance: 0.3, softness: 0.2 },
+        wideFlood: { beamAngle: 60, tiltAngle: 60, wallDistance: 0.8, softness: 0.8 },
+        wallWash: { beamAngle: 40, tiltAngle: 45, wallDistance: 0.5, softness: 0.6 },
+        accent: { beamAngle: 20, tiltAngle: 35, wallDistance: 0.4, softness: 0.3 },
+      };
+
+      const applyPreset = (preset) => {
+        setBeamAngle(preset.beamAngle);
+        setTiltAngle(preset.tiltAngle);
+        setWallDistance(preset.wallDistance);
+        setSoftness(preset.softness);
+      };
+
+      return (
+        <div className="flex h-screen bg-gray-900 text-white">
+          {/* 3D 視圖 */}
+          <div className="flex-1 relative">
+            <canvas ref={canvasRef} className="w-full h-full" />
+
+            {/* 說明 */}
+            <div className="absolute top-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-3 text-sm">
+              <p className="text-gray-300">拖曳旋轉 | 滾輪縮放 | 右鍵平移</p>
+            </div>
+
+            {/* 當前數值顯示 */}
+            <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur-sm rounded-lg p-4">
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                <span className="text-gray-400">放射角度:</span>
+                <span className="text-yellow-400 font-mono">{beamAngle}°</span>
+                <span className="text-gray-400">傾斜角度:</span>
+                <span className="text-yellow-400 font-mono">{tiltAngle}°</span>
+                <span className="text-gray-400">離牆距離:</span>
+                <span className="text-yellow-400 font-mono">{wallDistance.toFixed(2)}m</span>
+                <span className="text-gray-400">柔光程度:</span>
+                <span className="text-yellow-400 font-mono">{(softness * 100).toFixed(0)}%</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 控制面板 */}
+          <div className="w-80 bg-gray-800 p-4 overflow-y-auto">
+            <h1 className="text-xl font-bold mb-4 text-center">崁燈洗牆模擬器</h1>
+
+            {/* 預設 */}
+            <div className="mb-6">
+              <h2 className="text-sm font-semibold text-gray-400 mb-2">快速預設</h2>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => applyPreset(presets.narrowBeam)}
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition"
+                >
+                  窄光束
+                </button>
+                <button
+                  onClick={() => applyPreset(presets.wideFlood)}
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition"
+                >
+                  寬泛光
+                </button>
+                <button
+                  onClick={() => applyPreset(presets.wallWash)}
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition"
+                >
+                  洗牆效果
+                </button>
+                <button
+                  onClick={() => applyPreset(presets.accent)}
+                  className="px-3 py-2 bg-gray-700 hover:bg-gray-600 rounded text-sm transition"
+                >
+                  重點照明
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-5">
+              {/* 放射角度 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">放射角度 (Beam Angle)</label>
+                  <span className="text-yellow-400 font-mono text-sm">{beamAngle}°</span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="120"
+                  value={beamAngle}
+                  onChange={(e) => setBeamAngle(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">控制光束的發散範圍</p>
+              </div>
+
+              {/* 傾斜角度 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">與天花板夾角 (Tilt)</label>
+                  <span className="text-yellow-400 font-mono text-sm">{tiltAngle}°</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="90"
+                  value={tiltAngle}
+                  onChange={(e) => setTiltAngle(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">0°=水平照射牆面, 90°=垂直向下</p>
+              </div>
+
+              {/* 離牆距離 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">離牆距離</label>
+                  <span className="text-yellow-400 font-mono text-sm">{wallDistance.toFixed(2)}m</span>
+                </div>
+                <input
+                  type="range"
+                  min="0.1"
+                  max="1.5"
+                  step="0.05"
+                  value={wallDistance}
+                  onChange={(e) => setWallDistance(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">燈具中心到牆面的距離</p>
+              </div>
+
+              {/* 柔光程度 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">均光效果 (Softness)</label>
+                  <span className="text-yellow-400 font-mono text-sm">{(softness * 100).toFixed(0)}%</span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="2"
+                  step="0.05"
+                  value={softness}
+                  onChange={(e) => setSoftness(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">0%=銳利邊緣, 100%=柔和, 200%=極柔和</p>
+              </div>
+
+              {/* 燈光強度 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">燈光強度</label>
+                  <span className="text-yellow-400 font-mono text-sm">{lightIntensity}</span>
+                </div>
+                <input
+                  type="range"
+                  min="10"
+                  max="300"
+                  value={lightIntensity}
+                  onChange={(e) => setLightIntensity(Number(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                />
+              </div>
+
+              {/* 色溫 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">燈光顏色</label>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setLightColor('#fff5e6')}
+                    className={`flex-1 py-2 rounded text-sm ${lightColor === '#fff5e6' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#fff5e6', color: '#333' }}
+                  >
+                    暖白 3000K
+                  </button>
+                  <button
+                    onClick={() => setLightColor('#ffffff')}
+                    className={`flex-1 py-2 rounded text-sm ${lightColor === '#ffffff' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#ffffff', color: '#333' }}
+                  >
+                    自然白 4000K
+                  </button>
+                  <button
+                    onClick={() => setLightColor('#f0f5ff')}
+                    className={`flex-1 py-2 rounded text-sm ${lightColor === '#f0f5ff' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#f0f5ff', color: '#333' }}
+                  >
+                    冷白 6000K
+                  </button>
+                </div>
+              </div>
+
+              {/* 牆面顏色 */}
+              <div>
+                <div className="flex justify-between mb-1">
+                  <label className="text-sm font-medium">牆面顏色</label>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <button
+                    onClick={() => setWallColor('#9e9e9e')}
+                    className={`flex-1 py-2 rounded text-xs ${wallColor === '#9e9e9e' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#9e9e9e', color: '#fff' }}
+                  >
+                    水泥灰
+                  </button>
+                  <button
+                    onClick={() => setWallColor('#f5f5f5')}
+                    className={`flex-1 py-2 rounded text-xs ${wallColor === '#f5f5f5' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#f5f5f5', color: '#333' }}
+                  >
+                    白色
+                  </button>
+                  <button
+                    onClick={() => setWallColor('#e8dcc8')}
+                    className={`flex-1 py-2 rounded text-xs ${wallColor === '#e8dcc8' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#e8dcc8', color: '#333' }}
+                  >
+                    米白
+                  </button>
+                  <button
+                    onClick={() => setWallColor('#d4c4a8')}
+                    className={`flex-1 py-2 rounded text-xs ${wallColor === '#d4c4a8' ? 'ring-2 ring-yellow-500' : ''}`}
+                    style={{ background: '#d4c4a8', color: '#333' }}
+                  >
+                    卡其
+                  </button>
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={wallColor}
+                    onChange={(e) => setWallColor(e.target.value)}
+                    className="w-8 h-8 rounded cursor-pointer"
+                  />
+                  <span className="text-xs text-gray-400">自訂顏色</span>
+                </div>
+              </div>
+
+              <hr className="border-gray-700" />
+
+              {/* 多燈設定 */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showSecondLight}
+                    onChange={(e) => setShowSecondLight(e.target.checked)}
+                    className="w-4 h-4 accent-yellow-500"
+                  />
+                  <span className="text-sm font-medium">啟用第二盞燈</span>
+                </label>
+
+                {showSecondLight && (
+                  <div className="mt-3">
+                    <div className="flex justify-between mb-1">
+                      <label className="text-sm">燈間距</label>
+                      <span className="text-yellow-400 font-mono text-sm">{lightSpacing.toFixed(2)}m</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0.5"
+                      max="2"
+                      step="0.1"
+                      value={lightSpacing}
+                      onChange={(e) => setLightSpacing(Number(e.target.value))}
+                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* 輔助線 */}
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showHelper}
+                    onChange={(e) => setShowHelper(e.target.checked)}
+                    className="w-4 h-4 accent-yellow-500"
+                  />
+                  <span className="text-sm font-medium">顯示光錐輔助線</span>
+                </label>
+              </div>
+            </div>
+
+            {/* 設計建議 */}
+            <div className="mt-6 p-3 bg-gray-700/50 rounded-lg">
+              <h3 className="text-sm font-semibold text-yellow-400 mb-2">設計建議</h3>
+              <ul className="text-xs text-gray-300 space-y-1">
+                <li>• 洗牆效果建議離牆 30-50cm</li>
+                <li>• 均勻洗牆角度約 40-60°</li>
+                <li>• 重點照明使用窄角 15-25°</li>
+                <li>• 柔光 &gt;50% 可減少眩光</li>
+              </ul>
+            </div>
+
+            {/* 計算結果 */}
+            <div className="mt-4 p-3 bg-blue-900/30 rounded-lg">
+              <h3 className="text-sm font-semibold text-blue-400 mb-2">光學計算</h3>
+              <div className="text-xs text-gray-300 space-y-1">
+                <p>光錐直徑 (地面): <span className="text-blue-300 font-mono">
+                  {(2 * 3 * Math.tan(beamAngle * Math.PI / 360)).toFixed(2)}m
+                </span></p>
+                <p>牆面光斑高度: <span className="text-blue-300 font-mono">
+                  {(3 / Math.sin(tiltAngle * Math.PI / 180) * Math.tan(beamAngle * Math.PI / 360) * 2).toFixed(2)}m
+                </span></p>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // 渲染應用
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<LightingSimulator />);
+  </script>
+</body>
+</html>
