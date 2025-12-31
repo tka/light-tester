@@ -311,6 +311,26 @@
         scene.add(spotLightHelper);
         spotLightHelperRef.current = spotLightHelper;
 
+        // 輔助光源群組（用於均光效果）
+        const auxLights = [];
+        for (let i = 0; i < 4; i++) {
+          const auxLight = new THREE.SpotLight(0xfff5e6, 0);
+          auxLight.penumbra = 1;
+          auxLight.decay = 1.5;
+          auxLight.distance = 12;
+          auxLight.castShadow = false; // 不投射陰影，節省效能
+          auxLight.visible = false;
+          scene.add(auxLight);
+
+          // 輔助光源目標
+          const auxTarget = new THREE.Object3D();
+          scene.add(auxTarget);
+          auxLight.target = auxTarget;
+
+          auxLights.push({ light: auxLight, target: auxTarget });
+        }
+        sceneRef.current.auxLights = auxLights;
+
         // 燈具模型 (崁燈外殼)
         const lightFixture = new THREE.Group();
         const outerRing = new THREE.Mesh(
@@ -346,11 +366,30 @@
         lightFixture2.visible = false;
         scene.add(lightFixture2);
 
+        // 第二盞燈的輔助光源群組
+        const auxLights2 = [];
+        for (let i = 0; i < 4; i++) {
+          const auxLight2 = new THREE.SpotLight(0xfff5e6, 0);
+          auxLight2.penumbra = 1;
+          auxLight2.decay = 1.5;
+          auxLight2.distance = 12;
+          auxLight2.castShadow = false;
+          auxLight2.visible = false;
+          scene.add(auxLight2);
+
+          const auxTarget2 = new THREE.Object3D();
+          scene.add(auxTarget2);
+          auxLight2.target = auxTarget2;
+
+          auxLights2.push({ light: auxLight2, target: auxTarget2 });
+        }
+
         // 儲存到 ref
         sceneRef.current.spotLight2 = spotLight2;
         sceneRef.current.targetObject2 = targetObject2;
         sceneRef.current.lightFixture = lightFixture;
         sceneRef.current.lightFixture2 = lightFixture2;
+        sceneRef.current.auxLights2 = auxLights2;
         sceneRef.current.targetObject = targetObject;
         sceneRef.current.roomHeight = roomHeight;
         sceneRef.current.roomDepth = roomDepth;
@@ -409,13 +448,37 @@
         scene.targetObject.position.set(0, targetY, targetZ);
 
         // 更新燈光參數
-        spotLight.angle = THREE.MathUtils.degToRad(beamAngle / 2);
-        spotLight.penumbra = Math.min(softness, 1); // penumbra 最大 1
-        // softness > 1 時降低 decay 讓光線更柔和，同時增加 distance 讓光傳播更遠
-        spotLight.decay = softness > 1 ? Math.max(0.1, 2 - (softness - 1) * 0.5) : 2;
-        spotLight.distance = 10 + (softness > 1 ? (softness - 1) * 5 : 0);
-        spotLight.intensity = lightIntensity;
+        const baseAngle = THREE.MathUtils.degToRad(beamAngle / 2);
+        spotLight.angle = baseAngle;
+        // 主光源 penumbra：softness 0~0.33 時從 0 到 1
+        spotLight.penumbra = Math.min(softness * 3, 1);
+        spotLight.decay = 2;
+        spotLight.distance = 10;
+        // 主光源強度隨 softness 增加而降低（讓輔助光源補償）
+        const mainIntensityRatio = 1 - softness * 0.4; // 1 -> 0.6
+        spotLight.intensity = lightIntensity * mainIntensityRatio;
         spotLight.color.set(lightColor);
+
+        // 更新輔助光源（用於均光效果）
+        const auxStartThreshold = 0.2; // 從 20% 開始加入輔助光源
+        if (scene.auxLights) {
+          scene.auxLights.forEach((aux, i) => {
+            // 每個輔助光源在不同的 softness 值開始啟用
+            const activationPoint = auxStartThreshold + i * 0.2; // 0.2, 0.4, 0.6, 0.8
+            const auxStrength = Math.max(0, (softness - activationPoint) / (1 - activationPoint));
+
+            aux.light.visible = softness > activationPoint;
+
+            if (aux.light.visible) {
+              // 角度比主光源略大
+              aux.light.angle = baseAngle * (1.15 + i * 0.1);
+              aux.light.intensity = lightIntensity * auxStrength * 0.12;
+              aux.light.color.set(lightColor);
+              aux.light.position.copy(spotLight.position);
+              aux.target.position.set(0, targetY, targetZ);
+            }
+          });
+        }
 
         // 更新燈具位置
         if (scene.lightFixture) {
@@ -435,15 +498,40 @@
 
           if (showSecondLight) {
             scene.spotLight2.position.set(lightSpacing, lightY, lightZ);
-            scene.spotLight2.angle = spotLight.angle;
-            scene.spotLight2.penumbra = Math.min(softness, 1);
-            scene.spotLight2.decay = spotLight.decay;
-            scene.spotLight2.distance = spotLight.distance;
-            scene.spotLight2.intensity = lightIntensity;
+            scene.spotLight2.angle = baseAngle;
+            scene.spotLight2.penumbra = Math.min(softness * 3, 1);
+            scene.spotLight2.decay = 2;
+            scene.spotLight2.distance = 10;
+            scene.spotLight2.intensity = lightIntensity * mainIntensityRatio;
             scene.spotLight2.color.set(lightColor);
 
             scene.targetObject2.position.set(lightSpacing, targetY, targetZ);
             scene.lightFixture2.position.copy(scene.spotLight2.position);
+
+            // 第二盞燈的輔助光源
+            if (scene.auxLights2) {
+              scene.auxLights2.forEach((aux, i) => {
+                const activationPoint = auxStartThreshold + i * 0.2;
+                const auxStrength = Math.max(0, (softness - activationPoint) / (1 - activationPoint));
+
+                aux.light.visible = showSecondLight && softness > activationPoint;
+
+                if (aux.light.visible) {
+                  aux.light.angle = baseAngle * (1.15 + i * 0.1);
+                  aux.light.intensity = lightIntensity * auxStrength * 0.12;
+                  aux.light.color.set(lightColor);
+                  aux.light.position.copy(scene.spotLight2.position);
+                  aux.target.position.set(lightSpacing, targetY, targetZ);
+                }
+              });
+            }
+          } else {
+            // 隱藏第二盞燈的輔助光源
+            if (scene.auxLights2) {
+              scene.auxLights2.forEach((aux) => {
+                aux.light.visible = false;
+              });
+            }
           }
         }
       }, [beamAngle, tiltAngle, wallDistance, softness, lightIntensity, lightColor, showHelper, showSecondLight, lightSpacing, wallHeight]);
@@ -682,19 +770,19 @@
               {/* 柔光程度 */}
               <div>
                 <div className="flex justify-between mb-1">
-                  <label className="text-sm font-medium">均光效果 (Softness)</label>
+                  <label className="text-sm font-medium">均光效果</label>
                   <span className="text-yellow-400 font-mono text-sm">{(softness * 100).toFixed(0)}%</span>
                 </div>
                 <input
                   type="range"
                   min="0"
-                  max="4"
-                  step="0.05"
+                  max="1"
+                  step="0.01"
                   value={softness}
                   onChange={(e) => setSoftness(Number(e.target.value))}
                   className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">0%=銳利邊緣, 100%=柔和, 200%+=極柔和漫射</p>
+                <p className="text-xs text-gray-500 mt-1">調整光線邊緣的柔和程度</p>
               </div>
 
               {/* 燈光強度 */}
