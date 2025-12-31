@@ -391,7 +391,8 @@
 
         const spotLight = spotLightRef.current;
         const scene = sceneRef.current;
-        const roomHeight = scene.roomHeight;
+        // 直接使用 wallHeight state，確保燈的位置與牆壁高度同步
+        const roomHeight = wallHeight;
         const roomDepth = scene.roomDepth;
 
         // 計算燈的位置
@@ -410,8 +411,9 @@
         // 更新燈光參數
         spotLight.angle = THREE.MathUtils.degToRad(beamAngle / 2);
         spotLight.penumbra = Math.min(softness, 1); // penumbra 最大 1
-        // softness > 1 時降低 decay 讓光線更柔和
-        spotLight.decay = softness > 1 ? Math.max(0.5, 2 - (softness - 1)) : 2;
+        // softness > 1 時降低 decay 讓光線更柔和，同時增加 distance 讓光傳播更遠
+        spotLight.decay = softness > 1 ? Math.max(0.1, 2 - (softness - 1) * 0.5) : 2;
+        spotLight.distance = 10 + (softness > 1 ? (softness - 1) * 5 : 0);
         spotLight.intensity = lightIntensity;
         spotLight.color.set(lightColor);
 
@@ -436,6 +438,7 @@
             scene.spotLight2.angle = spotLight.angle;
             scene.spotLight2.penumbra = Math.min(softness, 1);
             scene.spotLight2.decay = spotLight.decay;
+            scene.spotLight2.distance = spotLight.distance;
             scene.spotLight2.intensity = lightIntensity;
             scene.spotLight2.color.set(lightColor);
 
@@ -685,13 +688,13 @@
                 <input
                   type="range"
                   min="0"
-                  max="2"
+                  max="4"
                   step="0.05"
                   value={softness}
                   onChange={(e) => setSoftness(Number(e.target.value))}
                   className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-yellow-500"
                 />
-                <p className="text-xs text-gray-500 mt-1">0%=銳利邊緣, 100%=柔和, 200%=極柔和</p>
+                <p className="text-xs text-gray-500 mt-1">0%=銳利邊緣, 100%=柔和, 200%+=極柔和漫射</p>
               </div>
 
               {/* 燈光強度 */}
